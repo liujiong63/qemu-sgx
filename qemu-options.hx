@@ -4047,6 +4047,25 @@ contents of @code{iv.b64} to the second secret
 
 ETEXI
 
+DEF("sgx", HAS_ARG, QEMU_OPTION_sgx,
+    "-sgx epc=megs[,lehash=string]\n"
+    "               configure guest SGX support\n"
+    "		    epc: SGX Enclave Page Cache size (megs)\n"
+    "               pubkey-hash: SHA2-256 hash of Launch Enclave's private"
+    "				 key (default: hash of Intel's key)",
+    QEMU_ARCH_I386)
+STEXI
+@item -sgx epc=@var{megs}[,pubkey-hash=string]
+@findex -sgx
+Enable SGX. Set EPC to @var{megs} megabytes. Optionally, a suffix of ``M'' or
+``G'' can be used to signify a value in megabytes or gigabytes respectively.
+Optionally @var{pubkey-hash} can be used to specifiy 3rd-party RSA public key
+SHA2-256 hash (default is hash of Intel's key).
+
+@example
+qemu-system-x86_64 -sgx epc=64m
+@end example
+ETEXI
 
 HXCOMM This is the last statement. Insert new options before this line!
 STEXI

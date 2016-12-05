@@ -546,6 +546,23 @@ static QemuOptsList qemu_iscsi_opts = {
 };
 #endif
 
+static QemuOptsList qemu_sgx_opts = {
+    .name = "sgx",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_sgx_opts.head),
+    .desc = {
+        {
+            .name = "epc",
+            .type = QEMU_OPT_SIZE,
+            .help = "SGX Enclave Page Cache size",
+        },{
+            .name = "lehash",
+            .type = QEMU_OPT_STRING,
+            .help = "SGX 3rd-party RSA public key SHA2-256 hash",
+        },
+        { /* end of list */ }
+    },
+};
+
 /**
  * Get machine options
  *
@@ -3076,6 +3093,7 @@ int main(int argc, char **argv, char **envp)
 #ifdef CONFIG_LIBISCSI
     qemu_add_opts(&qemu_iscsi_opts);
 #endif
+    qemu_add_opts(&qemu_sgx_opts);
     module_call_init(MODULE_INIT_OPTS);
 
     runstate_init();
@@ -3353,6 +3371,13 @@ int main(int argc, char **argv, char **envp)
                 }
                 break;
 #endif
+            case QEMU_OPTION_sgx:
+                opts = qemu_opts_parse_noisily(qemu_find_opts("sgx"),
+                                               optarg, false);
+                if (!opts) {
+                    exit(1);
+                }
+                break;
 #ifdef CONFIG_SLIRP
             case QEMU_OPTION_tftp:
                 error_report("The -tftp option is deprecated. "

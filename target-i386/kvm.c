@@ -1161,6 +1161,148 @@ static void register_smram_listener(Notifier *n, void *unused)
                                  &smram_address_space, 1);
 }
 
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH0         0xa6053e051270b7ac
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH1         0x6cfbe8ba8b3b413d
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH2         0xc4916d99f2b3735d
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH3         0xd4f8c05909f9bb3b
+
+static uint64_t sgx_intel_lehash[4] = {
+    SGX_INTEL_DEFAULT_LEPUBKEYHASH0,
+    SGX_INTEL_DEFAULT_LEPUBKEYHASH1,
+    SGX_INTEL_DEFAULT_LEPUBKEYHASH2,
+    SGX_INTEL_DEFAULT_LEPUBKEYHASH3,
+};
+
+static struct SGXinfo sgx = {0, 0,
+        {SGX_INTEL_DEFAULT_LEPUBKEYHASH0,
+         SGX_INTEL_DEFAULT_LEPUBKEYHASH1,
+         SGX_INTEL_DEFAULT_LEPUBKEYHASH2,
+         SGX_INTEL_DEFAULT_LEPUBKEYHASH3}, 0};
+
+struct SGXinfo *sgx_state = &sgx;
+
+static void sgx_set_intel_lehash(void)
+{
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        sgx_state->ia32_sgxlepubkeyhash[i] = sgx_intel_lehash[i];
+    }
+}
+
+static int sgx_lcp_lehash_sanity_check(const char *lehash_str)
+{
+    /* LE hash must be 256-bit value, which means 64 characters. */
+    return strlen(lehash_str) == 64;
+}
+
+static char hex_ctoi(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c -  '0';
+	else if (c >= 'a' && c <= 'f')
+		return 0xa + c - 'a';
+	else if (c >= 'A' && c <= 'F')
+		return 0xa + c - 'A';
+	else {
+		error_report("invalid SGX hash of LE key\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static unsigned long _parse_sgx_lehash_one(const char *s, int pos)
+{
+    unsigned long v = 0;
+
+    if (pos >= 16)
+	    return v;
+
+    /* calculate one byte value -- 2 characters */
+    v = hex_ctoi(*s); s++; pos++;
+    v = (v << 4) + hex_ctoi(*s); s++; pos++;
+
+    /* go through and convert from little-endian to big-endian */
+    v += (_parse_sgx_lehash_one(s, pos) << 8);
+
+    return v;
+}
+
+static unsigned long parse_sgx_lehash_one(const char *lehash_str)
+{
+    return _parse_sgx_lehash_one(lehash_str, 0);
+}
+
+static void parse_sgx_lehash_option(const char *lehash_str)
+{
+    int i;
+
+    if (!sgx_lcp_lehash_sanity_check(lehash_str)) {
+            error_report("invalid SGX hash of LE key\n");
+            exit(EXIT_FAILURE);
+    }
+
+    for (i = 0; i < 4; i++) {
+	printf("ia32_sgxlepubkeyhash[%d]: %16s\n", i, lehash_str + i*16);
+
+        sgx_state->ia32_sgxlepubkeyhash[i] =
+            parse_sgx_lehash_one(lehash_str + i*16);
+
+	printf("ia32_sgxlepubkeyhash[%d]: 0x%lx\n", i,
+			sgx_state->ia32_sgxlepubkeyhash[i]);
+    }
+}
+
+/* currently EPC can not exceed 128M, which is consistent with hardware */
+#define MAX_EPC_SIZE    (128 << 20)
+void parse_sgx_options(void)
+{
+    QemuOpts *opts = qemu_opts_find(qemu_find_opts("sgx"), NULL);
+    uint64_t epc_sz = 0;
+    const char *epc_str, *lehash_str;
+
+    if (!opts)
+	    return;
+
+    epc_str = qemu_opt_get(opts, "epc");
+    if (!epc_str) {
+        error_report("missing 'epc' option\n");
+        exit(EXIT_FAILURE);
+    }
+
+    epc_sz = qemu_opt_get_size(opts, "epc", 0);
+    if (epc_sz == 0) {
+        error_report("invalid EPC size.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /*
+     * Align EPC to 1M boundary.
+     *
+     * FIXME: SDM actually says EPC + EPCM should be power of 2, but we don't
+     * need EPCM for guest here, and for using EPC more efficiently, we allow
+     * EPC to be any size at 1M boundary.
+     */
+    epc_sz = QEMU_ALIGN_UP(epc_sz, (1uL << 20));
+
+    if (epc_sz > MAX_EPC_SIZE) {
+        error_report("SGX EPC size cannot exceed 128M.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    sgx_state->epc_sz = epc_sz;
+
+    sgx_set_intel_lehash();
+
+    lehash_str = qemu_opt_get(opts, "lehash");
+    if (lehash_str)
+        parse_sgx_lehash_option(lehash_str);
+
+    if (!kvm_enabled()) {
+        error_report("SGX features requires KVM support.\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     uint64_t identity_base = 0xfffbc000;
@@ -1236,6 +1378,9 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
         smram_machine_done.notify = register_smram_listener;
         qemu_add_machine_init_done_notifier(&smram_machine_done);
     }
+
+    parse_sgx_options();
+
     return 0;
 }
 

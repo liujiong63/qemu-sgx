@@ -45,4 +45,14 @@ void kvm_put_apicbase(X86CPU *cpu, uint64_t value);
 
 bool kvm_enable_x2apic(void);
 bool kvm_has_x2apic_api(void);
+
+struct SGXinfo {
+    uint64_t epc_sz;    /* epc_sz == 0 also means SGX not supported */
+    uint64_t epc_base;  /* Calculated by Qemu */
+    uint64_t ia32_sgxlepubkeyhash[4];
+};
+
+extern struct SGXinfo *sgx_state;
+void parse_sgx_options(void);
+
 #endif
