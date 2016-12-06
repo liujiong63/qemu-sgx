@@ -415,7 +415,7 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
     },
     [FEAT_7_0_EBX] = {
         .feat_names = {
-            "fsgsbase", "tsc-adjust", NULL, "bmi1",
+            "fsgsbase", "tsc-adjust", "sgx", "bmi1",
             "hle", "avx2", NULL, "smep",
             "bmi2", "erms", "invpcid", "rtm",
             NULL, NULL, "mpx", NULL,
@@ -428,6 +428,7 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
         .cpuid_needs_ecx = true, .cpuid_ecx = 0,
         .cpuid_reg = R_EBX,
         .tcg_features = TCG_7_0_EBX_FEATURES,
+        .unmigratable_flags = CPUID_7_0_EBX_SGX,
     },
     [FEAT_7_0_ECX] = {
         .feat_names = {
@@ -438,12 +439,13 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
             NULL, NULL, NULL, NULL,
             NULL, NULL, "rdpid", NULL,
             NULL, NULL, NULL, NULL,
-            NULL, NULL, NULL, NULL,
+            NULL, NULL, "sgxlc", NULL,
         },
         .cpuid_eax = 7,
         .cpuid_needs_ecx = true, .cpuid_ecx = 0,
         .cpuid_reg = R_ECX,
         .tcg_features = TCG_7_0_ECX_FEATURES,
+	.unmigratable_flags = CPUID_7_0_ECX_SGX_LCP,
     },
     [FEAT_7_0_EDX] = {
         .feat_names = {
@@ -2406,6 +2408,14 @@ void cpu_clear_apic_feature(CPUX86State *env)
 
 #endif /* !CONFIG_USER_ONLY */
 
+/* Called after x86_cpu_load_features */
+static bool x86_cpu_has_sgx(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+
+    return !!(env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_SGX);
+}
+
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx)
@@ -2573,6 +2583,14 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                 *ecx |= CPUID_7_0_ECX_OSPKE;
             }
             *edx = env->features[FEAT_7_0_EDX]; /* Feature flags */
+
+            /*
+             * If user didn't specify SGX qemu parameter, just disable it
+             * in CPUID. Also check EPC base, which should have been
+             * calcuated by reaching here, in case Qemu did something wrong.
+             */
+            if (!sgx_state->epc_sz || !sgx_state->epc_base)
+                *ebx &= ~CPUID_7_0_EBX_SGX;
         } else {
             *eax = 0;
             *ebx = 0;
@@ -2657,6 +2675,57 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                 *ebx = esa->offset;
             }
         }
+        break;
+    }
+    case 0x12: {
+        /*
+         * Actually by reaching here x86_cpu_has_sgx(cpu) should be true,
+         * but for sure we check it here anyway.
+         */
+        if (!x86_cpu_has_sgx(cpu)) {
+            *eax = *ebx = *ecx = *edx = 0;
+            break;
+        }
+
+        /*
+         * In case user didn't specify SGX qemu parameter, but
+         * KVM_GET_SUPPORTED_CPUID reports SGX feature.
+         */
+        if (!sgx_state->epc_sz) {
+            *eax = *ebx = *ecx = *edx = 0;
+            break;
+        }
+
+        /*
+         * EPC base must have been calcuated. Check anyway in case anything
+         * goes wrong and give KVM an opportunity to report fault.
+         */
+        if (!sgx_state->epc_base) {
+            *eax = *ebx = *ecx = *edx = 0;
+            break;
+        }
+
+        /*
+         * We didn't keep CPUID.0x12.{0x0, 0x1, 0x2} in env->features,
+         * so call kvm_arch_get_supported_cpuid directly, which is OK as
+         * we already have checked KVM is enabled.
+         */
+        *eax = kvm_arch_get_supported_cpuid(kvm_state, 0x12, count, R_EAX);
+        *ebx = kvm_arch_get_supported_cpuid(kvm_state, 0x12, count, R_EBX);
+        *ecx = kvm_arch_get_supported_cpuid(kvm_state, 0x12, count, R_ECX);
+        *edx = kvm_arch_get_supported_cpuid(kvm_state, 0x12, count, R_EDX);
+
+        if (count == 2) {
+            /*
+             * FIX EPC base and size for CPUID.0x12.2. KVM depends on this
+             * to receive guest's virtual EPC base and size.
+             */
+            *eax = (uint32_t)(sgx_state->epc_base & 0xfffff000) | (*eax & 0xf);
+            *ebx = (uint32_t)(sgx_state->epc_base >> 32);
+            *ecx = (uint32_t)(sgx_state->epc_sz & 0xfffff000) | (*ecx & 0xf);
+            *edx = (uint32_t)(sgx_state->epc_sz >> 32);
+        }
+
         break;
     }
     case 0x80000000:
@@ -3217,6 +3286,17 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
         return;
     }
 
+    /*
+     * SGX is not migratable. If SGX is specified in Qemu option,
+     * which means user wants to use SGX, we need to mark CPU as
+     * non-migratable to disable live migration.
+     */
+    if (sgx_state->epc_sz) {
+        object_property_set_bool(OBJECT(cpu), false, "migratable", &local_err);
+        if (local_err)
+            goto out;
+    }
+
     x86_cpu_load_features(cpu, &local_err);
     if (local_err) {
         goto out;
@@ -3232,6 +3312,19 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
                            "TCG doesn't support requested features");
             goto out;
         }
+    }
+
+    /*
+     * Check whether x86 CPU supports SGX. No need to check whether KVM
+     * is enabled as it's alreaday been done in parse_sgx_options.
+     *
+     * FIXME: maybe we should clear SGX for x86 CPU if user didn't specify
+     * SGX qemu parameter? But anyway we will do this in KVM_SET_CPUID2.
+     */
+    if (sgx_state->epc_sz && !x86_cpu_has_sgx(cpu)) {
+        /* sgx_state->epc_sz != 0 already implies kvm_enabled() == 1 */
+        error_setg(&local_err, "x86 CPU doesn't support SGX.\n");
+        goto out;
     }
 
     /* On AMD CPUs, some CPUID[8000_0001].EDX bits must match the bits on

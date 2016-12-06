@@ -55,4 +55,6 @@ struct SGXinfo {
 extern struct SGXinfo *sgx_state;
 void parse_sgx_options(void);
 
+bool kvm_cpu_has_sgx(X86CPU *cpu);
+
 #endif

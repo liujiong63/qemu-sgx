@@ -199,7 +199,7 @@ void kvm_synchronize_all_tsc(void)
     }
 }
 
-static struct kvm_cpuid2 *try_get_cpuid(KVMState *s, int max)
+static struct kvm_cpuid2 *try_get_supported_cpuid(KVMState *s, int max)
 {
     struct kvm_cpuid2 *cpuid;
     int r, size;
@@ -235,10 +235,45 @@ static struct kvm_cpuid2 *get_supported_cpuid(KVMState *s)
     if (cpuid_cache != NULL) {
         return cpuid_cache;
     }
-    while ((cpuid = try_get_cpuid(s, max)) == NULL) {
+    while ((cpuid = try_get_supported_cpuid(s, max)) == NULL) {
         max *= 2;
     }
     cpuid_cache = cpuid;
+    return cpuid;
+}
+
+static struct kvm_cpuid2 *try_get_cpuid(X86CPU *cpu, int max)
+{
+    struct kvm_cpuid2 *cpuid;
+    int r, size;
+
+    size = sizeof(*cpuid) + max * sizeof(*cpuid->entries);
+    cpuid = g_malloc0(size);
+    cpuid->nent = max;
+    r = kvm_vcpu_ioctl(CPU(cpu), KVM_GET_CPUID2, cpuid);
+    if (r) {
+        if (r == -E2BIG) {
+            g_free(cpuid);
+            return NULL;
+        } else {
+            fprintf(stderr, "KVM_GET_CPUID2 failed: %s\n",
+                    strerror(-r));
+            exit(1);
+        }
+    }
+    return cpuid;
+}
+
+/* Get CPU's actual CPUID, which may differ with the one from
+ * KVM_GET_SUPPORTED_CPUID. */
+static struct kvm_cpuid2 *get_cpuid(X86CPU *cpu)
+{
+    struct kvm_cpuid2 *cpuid;
+    int max = 1;
+
+    while ((cpuid = try_get_cpuid(cpu, max)) == NULL) {
+        max *= 2;
+    }
     return cpuid;
 }
 
@@ -843,6 +878,16 @@ int kvm_arch_init_vcpu(CPUState *cs)
                             "cpuid(eax:0x%x,ecx:0x%x)\n", i, j);
                     abort();
                 }
+                c = &cpuid_data.entries[cpuid_i++];
+            }
+            break;
+        case 0x12:
+            /* Need 3 leaves for SGX CPUID 0x12s. CPUID.0x12.0x2 for EPC. */
+            for (j = 0; j <= 2; j++) {
+                c->function = i;
+                c->flags = KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+                c->index = j;
+                cpu_x86_cpuid(env, i, j, &c->eax, &c->ebx, &c->ecx, &c->edx);
                 c = &cpuid_data.entries[cpuid_i++];
             }
             break;
@@ -3678,4 +3723,15 @@ int kvm_arch_release_virq_post(int virq)
 int kvm_arch_msi_data_to_gsi(uint32_t data)
 {
     abort();
+}
+
+bool kvm_cpu_has_sgx(X86CPU *cpu)
+{
+    struct kvm_cpuid2 *cpuid2;
+    struct kvm_cpuid_entry2 *entry2;
+
+    cpuid2 = get_cpuid(cpu);
+    entry2 = cpuid_find_entry(cpuid2, 0x7, 0x0);
+
+    return !!(entry2->ebx & CPUID_7_0_EBX_SGX);
 }
