@@ -332,8 +332,10 @@
 #define MSR_IA32_TSCDEADLINE            0x6e0
 
 #define FEATURE_CONTROL_LOCKED                    (1<<0)
+#define FEATURE_CONTROL_VMXON_ENABLED_INSIDE_SMX  (1<<1)
 #define FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX (1<<2)
 #define FEATURE_CONTROL_LMCE                      (1<<20)
+#define FEATURE_CONTROL_SGX             (1<<18)
 
 #define MSR_P6_PERFCTR0                 0xc1
 

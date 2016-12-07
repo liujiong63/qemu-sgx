@@ -1017,6 +1017,10 @@ int kvm_arch_init_vcpu(CPUState *cs)
         return r;
     }
 
+    if (kvm_cpu_has_sgx(cpu)) {
+        has_msr_feature_control = true;
+    }
+
     r = kvm_arch_set_tsc_khz(cs);
     if (r < 0) {
         return r;
