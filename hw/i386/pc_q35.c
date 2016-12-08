@@ -47,6 +47,7 @@
 #include "hw/usb.h"
 #include "qemu/error-report.h"
 #include "migration/migration.h"
+#include "kvm_i386.h"
 
 /* ICH9 AHCI has 6 ports */
 #define MAX_SATA_PORTS     6
@@ -117,6 +118,34 @@ static void pc_q35_init(MachineState *machine)
     if (xen_enabled()) {
         xen_hvm_init(pcms, &ram_memory);
     }
+
+    /*
+     * Reserve part of memory for SGX EPC. This is also consistent with
+     * hardware implementation, where EPC is typically reserved memory
+     * via Processor Reserved Memory.
+     *
+     * This needs to be done before creating any vcpu as KVM_SET_CPUID2
+     * needs EPC base and size.
+     *
+     * FIXME:
+     * Currently EPC is always reserved from low_memory_below_4g, but we
+     * want to keep minimal low memory, which is hard-coded to 64M now,
+     * to keep guest running.
+     */
+#define LOW_MEMORY_MIN  (64UL << 20)
+    if (sgx_state->epc_sz) {
+        ram_addr_t epc_sz = sgx_state->epc_sz;
+        if (pcms->below_4g_mem_size < epc_sz + LOW_MEMORY_MIN) {
+            fprintf(stderr, "unable to reserve EPC from low-memory-below-4g. "
+                    "Please enlarge low-memory-below-4g");
+            exit(EXIT_FAILURE);
+        }
+        pcms->below_4g_mem_size -= epc_sz;
+        machine->ram_size -= epc_sz;
+        sgx_state->epc_base = pcms->below_4g_mem_size;
+        e820_add_entry(sgx_state->epc_base, sgx_state->epc_sz, E820_RESERVED);
+    }
+#undef  LOW_MEMORY_MIN
 
     pc_cpus_init(pcms);
 

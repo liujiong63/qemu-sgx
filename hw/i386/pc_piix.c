@@ -146,6 +146,34 @@ static void pc_init1(MachineState *machine,
         }
     }
 
+    /*
+     * Reserve part of memory for SGX EPC. This is also consistent with
+     * hardware implementation, where EPC is typically reserved memory
+     * via Processor Reserved Memory.
+     *
+     * This needs to be done before creating any vcpu as KVM_SET_CPUID2
+     * needs EPC base and size.
+     *
+     * FIXME:
+     * Currently EPC is always reserved from low_memory_below_4g, but we
+     * want to keep minimal low memory, which is hard-coded to 64M now,
+     * to keep guest running.
+     */
+#define LOW_MEMORY_MIN  (64UL << 20)
+    if (sgx_state->epc_sz) {
+        ram_addr_t epc_sz = sgx_state->epc_sz;
+        if (pcms->below_4g_mem_size < epc_sz + LOW_MEMORY_MIN) {
+            fprintf(stderr, "unable to reserve EPC from low-memory-below-4g. "
+                    "Please enlarge low-memory-below-4g");
+            exit(EXIT_FAILURE);
+        }
+        pcms->below_4g_mem_size -= epc_sz;
+        machine->ram_size -= epc_sz;
+        sgx_state->epc_base = pcms->below_4g_mem_size;
+        e820_add_entry(sgx_state->epc_base, sgx_state->epc_sz, E820_RESERVED);
+    }
+#undef  LOW_MEMORY_MIN
+
     pc_cpus_init(pcms);
 
     if (kvm_enabled() && pcmc->kvmclock_enabled) {
@@ -197,6 +225,7 @@ static void pc_init1(MachineState *machine,
                               system_memory, system_io, machine->ram_size,
                               pcms->below_4g_mem_size,
                               pcms->above_4g_mem_size,
+                              pcms->below_4g_mem_size + sgx_state->epc_sz,
                               pci_memory, ram_memory);
         pcms->bus = pci_bus;
     } else {
