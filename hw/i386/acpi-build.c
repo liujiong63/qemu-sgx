@@ -63,6 +63,8 @@
 
 #include "hw/acpi/ipmi.h"
 
+#include "kvm_i386.h"
+
 /* These are used to size the ACPI tables for -M pc-i440fx-1.7 and
  * -M pc-i440fx-2.0.  Even if the actual amount of AML generated grows
  * a little bit, there should be plenty of free space since the DSDT
@@ -372,6 +374,39 @@ void pc_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
             apic->flags = cpu_to_le32(0);
         }
     }
+}
+
+static void build_epc(Aml *scope, uint64_t epc_base, uint64_t epc_size)
+{
+    Aml *dev, *rbuf, *crs, *sta;
+
+    printf("Generate SSDT for EPC: base 0x%lx, size 0x%lx\n", epc_base, epc_size);
+
+    dev = aml_device("EPC");
+    aml_append(dev, aml_name_decl("_HID", aml_eisaid("INT0E0C")));
+    aml_append(dev, aml_name_decl("_STR", aml_unicode("Enclave Page Cache 1.0")));
+    /* FIXME: aml_append Package? */
+    rbuf = aml_resource_template();
+    aml_append(rbuf, aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED, AML_MAX_FIXED,
+            AML_NON_CACHEABLE,  /* consistent with ACPI dumped from bare-metal */
+            AML_READ_WRITE,
+            0x0000000000000000,
+            epc_base,
+            epc_base + epc_size - 1,
+            0x0000000000000000,
+            epc_size));
+    aml_append(dev, aml_name_decl("RBUF", rbuf));
+
+    crs = aml_method("_CRS", 0, AML_NOTSERIALIZED);
+    aml_append(crs, aml_return(rbuf));
+    aml_append(dev, crs);
+
+    sta = aml_method("_STA", 0, AML_SERIALIZED);
+    aml_append(sta, aml_return(aml_int(0x0F)));
+
+    aml_append(dev, sta);
+
+    aml_append(scope, dev);
 }
 
 static void
@@ -2357,6 +2392,9 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
 
                 aml_append(sb_scope, scope);
             }
+        }
+        if (sgx_state->epc_base && sgx_state->epc_sz) {
+            build_epc(sb_scope, sgx_state->epc_base, sgx_state->epc_sz);
         }
         aml_append(dsdt, sb_scope);
     }
