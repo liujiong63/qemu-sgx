@@ -2416,6 +2416,14 @@ static bool x86_cpu_has_sgx(X86CPU *cpu)
     return !!(env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_SGX);
 }
 
+/* Called after x86_cpu_load_features */
+static bool x86_cpu_has_sgx_lcp(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+
+    return !!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_SGX_LCP);
+}
+
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx)
@@ -2589,8 +2597,10 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
              * in CPUID. Also check EPC base, which should have been
              * calcuated by reaching here, in case Qemu did something wrong.
              */
-            if (!sgx_state->epc_sz || !sgx_state->epc_base)
+            if (!sgx_state->epc_sz || !sgx_state->epc_base) {
                 *ebx &= ~CPUID_7_0_EBX_SGX;
+                *ecx &= ~CPUID_7_0_ECX_SGX_LCP;
+	    }
         } else {
             *eax = 0;
             *ebx = 0;
@@ -3324,6 +3334,11 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
     if (sgx_state->epc_sz && !x86_cpu_has_sgx(cpu)) {
         /* sgx_state->epc_sz != 0 already implies kvm_enabled() == 1 */
         error_setg(&local_err, "x86 CPU doesn't support SGX.\n");
+        goto out;
+    }
+
+    if (!x86_cpu_has_sgx_lcp(cpu) && !sgx_lcp_is_intel_lehash()) {
+        error_setg(&local_err, "x86 CPU doesn't support SGX LCP.\n");
         goto out;
     }
 

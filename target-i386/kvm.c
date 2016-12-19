@@ -1352,6 +1352,17 @@ void parse_sgx_options(void)
     }
 }
 
+bool sgx_lcp_is_intel_lehash(void)
+{
+    int i;
+
+    for (i = 0; i < 4; i++)
+        if (sgx_state->ia32_sgxlepubkeyhash[i] != sgx_intel_lehash[i])
+            return false;
+
+    return true;
+}
+
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     uint64_t identity_base = 0xfffbc000;

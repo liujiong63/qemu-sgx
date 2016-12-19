@@ -52,6 +52,8 @@ struct SGXinfo {
     uint64_t ia32_sgxlepubkeyhash[4];
 };
 
+bool sgx_lcp_is_intel_lehash(void);
+
 extern struct SGXinfo *sgx_state;
 void parse_sgx_options(void);
 
