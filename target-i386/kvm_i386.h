@@ -50,6 +50,7 @@ struct SGXinfo {
     uint64_t epc_sz;    /* epc_sz == 0 also means SGX not supported */
     uint64_t epc_base;  /* Calculated by Qemu */
     uint64_t ia32_sgxlepubkeyhash[4];
+    bool ia32_sgxlepubkeyhash_writable;
 };
 
 bool sgx_lcp_is_intel_lehash(void);
@@ -58,5 +59,7 @@ extern struct SGXinfo *sgx_state;
 void parse_sgx_options(void);
 
 bool kvm_cpu_has_sgx(X86CPU *cpu);
+bool kvm_cpu_has_sgx_lcp(X86CPU *cpu);
+bool kvm_ia32_sgxlepubkeyhash_writable(X86CPU *cpu);
 
 #endif

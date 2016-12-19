@@ -1017,8 +1017,31 @@ int kvm_arch_init_vcpu(CPUState *cs)
         return r;
     }
 
+    cpu->kvm_msr_buf = g_malloc0(MSR_BUF_SIZE);
+
     if (kvm_cpu_has_sgx(cpu)) {
         has_msr_feature_control = true;
+    }
+    if (!kvm_cpu_has_sgx_lcp(cpu) && !sgx_lcp_is_intel_lehash()) {
+        error_report("kvm: x86 CPU doesn't support SGX LCP.\n");
+	return -ENOTSUP;
+    }
+    if (kvm_cpu_has_sgx_lcp(cpu)) {
+	/*
+	 * We need to check whether physical machine allows runtime
+	 * IA32_SGXLEPUBKEYHASH writing before calling KVM_SET_MSRS
+	 * to set them, otherwise KVM simply returns failure for
+	 * IA32_SGXLEPUBKEYHASH.
+	 */
+	sgx_state->ia32_sgxlepubkeyhash_writable =
+		kvm_ia32_sgxlepubkeyhash_writable(cpu);
+	if (!sgx_state->ia32_sgxlepubkeyhash_writable &&
+			!sgx_lcp_is_intel_lehash()) {
+		error_report("kvm: doesn't support lehash parameter, "
+				"as BIOS doesn't allow runtime "
+				"change of IA32_SGXLEPUBKEYHASH.\n");
+		return -ENOTSUP;
+	}
     }
 
     r = kvm_arch_set_tsc_khz(cs);
@@ -1043,7 +1066,6 @@ int kvm_arch_init_vcpu(CPUState *cs)
     if (has_xsave) {
         env->kvm_xsave_buf = qemu_memalign(4096, sizeof(struct kvm_xsave));
     }
-    cpu->kvm_msr_buf = g_malloc0(MSR_BUF_SIZE);
 
     if (!(env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_RDTSCP)) {
         has_msr_tsc_aux = false;
@@ -2000,6 +2022,18 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         for (i = 0; i < (env->mcg_cap & 0xff) * 4; i++) {
             kvm_msr_entry_add(cpu, MSR_MC0_CTL + i, env->mce_banks[i]);
         }
+    }
+
+    /* Write guest's SGX enclave public key hash. */
+    if (sgx_state->ia32_sgxlepubkeyhash_writable) {
+        kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH0,
+                sgx_state->ia32_sgxlepubkeyhash[0]);
+        kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH1,
+                sgx_state->ia32_sgxlepubkeyhash[1]);
+        kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH2,
+                sgx_state->ia32_sgxlepubkeyhash[2]);
+        kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH3,
+                sgx_state->ia32_sgxlepubkeyhash[3]);
     }
 
     ret = kvm_vcpu_ioctl(CPU(cpu), KVM_SET_MSRS, cpu->kvm_msr_buf);
@@ -3749,4 +3783,35 @@ bool kvm_cpu_has_sgx(X86CPU *cpu)
     entry2 = cpuid_find_entry(cpuid2, 0x7, 0x0);
 
     return !!(entry2->ebx & CPUID_7_0_EBX_SGX);
+}
+
+bool kvm_cpu_has_sgx_lcp(X86CPU *cpu)
+{
+    struct kvm_cpuid2 *cpuid2;
+    struct kvm_cpuid_entry2 *entry2;
+
+    cpuid2 = get_cpuid(cpu);
+    entry2 = cpuid_find_entry(cpuid2, 0x7, 0x0);
+
+    return !!(entry2->ecx & CPUID_7_0_ECX_SGX_LCP);
+}
+
+bool kvm_ia32_sgxlepubkeyhash_writable(X86CPU *cpu)
+{
+    int ret;
+
+    kvm_msr_buf_reset(cpu);
+
+    kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH0,
+                sgx_state->ia32_sgxlepubkeyhash[0]);
+    kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH1,
+                sgx_state->ia32_sgxlepubkeyhash[1]);
+    kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH2,
+                sgx_state->ia32_sgxlepubkeyhash[2]);
+    kvm_msr_entry_add(cpu, MSR_IA32_SGXLEPUBKEYHASH3,
+                sgx_state->ia32_sgxlepubkeyhash[3]);
+
+    ret = kvm_vcpu_ioctl(CPU(cpu), KVM_SET_MSRS, cpu->kvm_msr_buf);
+
+    return (ret == cpu->kvm_msr_buf->nmsrs);
 }
