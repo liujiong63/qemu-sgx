@@ -336,6 +336,7 @@
 #define FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX (1<<2)
 #define FEATURE_CONTROL_LMCE                      (1<<20)
 #define FEATURE_CONTROL_SGX             (1<<18)
+#define	FEATURE_CONTROL_SGX_LCP		(1<<17)
 
 #define MSR_P6_PERFCTR0                 0xc1
 
