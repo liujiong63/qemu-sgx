@@ -1035,6 +1035,12 @@ int kvm_arch_init_vcpu(CPUState *cs)
 	 */
 	sgx_state->ia32_sgxlepubkeyhash_writable =
 		kvm_ia32_sgxlepubkeyhash_writable(cpu);
+	if (!sgx_state->ia32_sgxlepubkeyhash_writable && sgx_state->le_wr) {
+		error_report("kvm: doesn't support le_wr parameter, "
+				"as BIOS doesn't allow runtime "
+				"change of IA32_SGXLEPUBKEYHASH.\n");
+		return -ENOTSUP;
+	}
 	if (!sgx_state->ia32_sgxlepubkeyhash_writable &&
 			!sgx_lcp_is_intel_lehash()) {
 		error_report("kvm: doesn't support lehash parameter, "
@@ -1367,6 +1373,8 @@ void parse_sgx_options(void)
     lehash_str = qemu_opt_get(opts, "lehash");
     if (lehash_str)
         parse_sgx_lehash_option(lehash_str);
+
+    sgx_state->le_wr = qemu_opt_get_bool(opts, "le_wr", false);
 
     if (!kvm_enabled()) {
         error_report("SGX features requires KVM support.\n");

@@ -51,6 +51,7 @@ struct SGXinfo {
     uint64_t epc_base;  /* Calculated by Qemu */
     uint64_t ia32_sgxlepubkeyhash[4];
     bool ia32_sgxlepubkeyhash_writable;
+    bool le_wr;
 };
 
 bool sgx_lcp_is_intel_lehash(void);

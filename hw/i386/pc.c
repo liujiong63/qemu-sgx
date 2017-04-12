@@ -1214,14 +1214,13 @@ static void pc_build_feature_control_file(PCMachineState *pcms)
         feature_control_bits |= FEATURE_CONTROL_LMCE;
     }
 
-    /*
-     * Note: We don't set LE_WR bit (17) as guest doesn't need to write
-     * MSR_IA32_SGXLEPUBKEYHASHn runtimely, which is only needed in case
-     * of nested, which we don't support for SGX now.
-     */
     cpu_x86_cpuid(env, 0x7, 0, &unused, &ebx, &unused, &unused);
     if (ebx & CPUID_7_0_EBX_SGX) {
 	feature_control_bits |= FEATURE_CONTROL_SGX;
+    }
+    cpu_x86_cpuid(env, 0x7, 0, &unused, &ebx, &ecx, &unused);
+    if (ecx & CPUID_7_0_ECX_SGX_LCP && sgx_state->le_wr) {
+	feature_control_bits |= FEATURE_CONTROL_SGX_LCP;
     }
 
     if (!feature_control_bits) {

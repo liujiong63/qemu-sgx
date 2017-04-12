@@ -559,6 +559,10 @@ static QemuOptsList qemu_sgx_opts = {
             .type = QEMU_OPT_STRING,
             .help = "SGX 3rd-party RSA public key SHA2-256 hash",
         },
+        {
+            .name = "le_wr",
+            .type = QEMU_OPT_BOOL
+        },
         { /* end of list */ }
     },
 };
